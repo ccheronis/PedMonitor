@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Patient Monitor (Simulation)</title>
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#000;--fg:#e6e6e6;--mut:#8a8a8a;--ecg:#3dff6b;--spo2:#35d7ff;--rr:#ffe14d;--bp:#fff;--tmp:#ff9f43;--alarm:#ff3b3b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:900px;margin-inline:auto;padding:8px}
+header{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--mut);padding:4px 2px 8px}
+header b{color:var(--fg)}
+.row{display:flex;align-items:stretch;border-top:1px solid #222;min-height:110px}
+.row canvas{flex:1;min-width:0;height:110px;display:block}
+.num{width:120px;padding:6px 8px;text-align:right;display:flex;flex-direction:column;justify-content:center}
+.lbl{font-size:12px;letter-spacing:.05em}
+.val{font-size:54px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.sm{font-size:12px;color:var(--mut)}
+.alarm .val{color:var(--alarm)!important;animation:b 1s steps(2) infinite}
+@keyframes b{50%{opacity:.25}}
+.bottom{display:flex;flex-wrap:wrap;gap:8px;border-top:1px solid #222}
+.bottom>div{flex:1;min-width:120px;padding:8px;text-align:right}
+.bottom .val{font-size:40px}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+button{background:#1a1a1a;color:var(--fg);border:1px solid #333;border-radius:8px;padding:8px 12px;font-size:13px}
+button.on{border-color:var(--spo2);color:var(--spo2)}
+#cont{width:100%;margin-top:12px;padding:14px;font-size:16px;font-weight:600;border-color:var(--spo2);color:var(--spo2)}#cont:disabled{opacity:.4}
+#pick{padding:24px 8px}#pick button{display:block;width:100%;margin:10px 0;padding:16px;font-size:18px}
+footer{font-size:11px;color:var(--mut);margin-top:10px}
+</style></head><body>
+<div id="pick" hidden><h2 style="margin:0 0 8px">Select case</h2>
+<button data-c="1">Case 1</button><button data-c="2">Case 2</button><button data-c="3">Case 3</button><button data-c="4">Case 4</button></div>
+<div id="mon" hidden>
+<header><b id="hdr"></b><span id="clock"></span></header>
+<div class="row"><canvas id="c0"></canvas><div class="num" style="color:var(--ecg)" id="n0"><span class="lbl">II · HR</span><span class="val" id="hr">--</span><span class="sm">bpm</span></div></div>
+<div class="row"><canvas id="c1"></canvas><div class="num" style="color:var(--spo2)" id="n1"><span class="lbl">Pleth · SpO₂</span><span class="val" id="sp">--</span><span class="sm" id="spu">%</span></div></div>
+<div class="row"><canvas id="c2"></canvas><div class="num" style="color:var(--rr)" id="n2"><span class="lbl">Resp · RR</span><span class="val" id="rr">--</span><span class="sm">/min</span></div></div>
+<div class="bottom">
+ <div style="color:var(--bp)" id="n3"><span class="lbl">NIBP</span><br><span class="val" id="bp">--/--</span><br><span class="sm" id="map"></span> · <span class="sm" id="bpt"></span></div>
+ <div style="color:var(--tmp)"><span class="lbl">TEMP</span><br><span class="val" id="tp">--</span><br><span class="sm">°C</span></div>
+ <div style="color:#fff" id="etw" hidden><span class="lbl">EtCO₂</span><br><span class="val" id="et">--</span><br><span class="sm">mmHg</span></div>
+ <div style="color:#c9a0ff" id="glw" hidden><span class="lbl">POC GLUCOSE</span><br><span class="val" id="gl">--</span><br><span class="sm" id="glt">mg/dL</span></div>
+</div>
+<button id="cont">Continue ▶</button>
+<div class="ctl"><span class="sm" id="scr"></span><button id="gb" hidden>Check glucose</button><button id="frz">Freeze</button><button id="rst">Restart case</button></div>
+<footer>Simulated patient. Not real data.</footer>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+// ===== EDIT HERE. v=[HR,SBP,DBP,RR,SpO2,Temp]; et=EtCO2; o=O2 label; r=resp pattern (obs|bvm|cs); art=motion artifact 0-1; rrHide=show "--" for RR =====
+// al=alarm limits: hh/hl HR hi/lo, sl SpO2 low, rh/rl RR hi/lo, sbl/sbh SBP lo/hi. DUR=transition seconds.
+const DUR=15;
+const CASES={
+1:{hdr:'Case 1 · 8 y · 25 kg',al:{hh:120,hl:60,sl:92,rh:26,rl:10,sbl:80,sbh:130},st:[
+ {v:[98,108,66,20,98,36.9],o:'RA'},
+ {v:[104,112,68,24,97,37.0],o:'RA'},
+ {v:[110,112,68,28,92,37.1],o:'RA',swing:[92,128,25],bpAlt:[[128,82],[96,54]],auto:1,dur:10,slow:{4:40}}]},
+2:{hdr:'Case 2 · 5 y',glu:98,al:{hh:130,hl:70,sl:90,rh:35,rl:12,sbl:85,sbh:140},st:[
+ {v:[110,122,78,24,94,37.6],o:'RA'}]},
+3:{hdr:'Case 3 · 7 mo · 8 kg',glu:88,al:{hh:180,hl:90,sl:90,rh:60,rl:20,sbl:70,sbh:120},st:[
+ {v:[190,104,70,30,84,39.4],r:'obs',art:1,rrHide:1},
+ {v:[196,108,72,30,82,39.7],r:'obs',art:1,rrHide:1},
+ {v:[170,96,60,20,95,39.6],r:'bvm',o:'O₂'}]},
+4:{hdr:'Case 4 · 10 y · 35 kg',al:{hh:130,hl:60,sl:94,rh:26,rl:10,sbl:85,sbh:150},st:[
+ {v:[110,92,54,20,98,36.8],et:38},
+ {v:[54,168,70,8,92,37.2],et:48,r:'cs'}]}
+};
+// =====================================================================================================
+const ss=x=>x*x*(3-2*x),g=(x,c,s)=>Math.exp(-((x-c)*(x-c))/(2*s*s));
+const ecg=p=>0.12*g(p,.18,.025)-0.12*g(p,.37,.01)+g(p,.40,.012)-0.2*g(p,.43,.012)+0.25*g(p,.65,.05);
+const ple=p=>{const q=(p+.85)%1;return g(q,.25,.09)+.35*g(q,.5,.08)};
+const vals=s=>[...s.v,s.et||0];
+const sw=(s,t)=>s.swing?(s.swing[1]-s.swing[0])/2*Math.sin(2*Math.PI*t/s.swing[2]):0;
+const N=400,B=[0,1,2].map(()=>new Float32Array(N)),cv=[0,1,2].map(i=>$('c'+i)),col=['#3dff6b','#35d7ff','#ffe14d'];
+let C,caseNo=0,idx=0,from,to,baseCur,prevSt,t0=0,frozen=false,cur=[],bpShown=null,bpTime=0,cuffN=0,cuffDone=false,ph=0,rph=0,acc=0,last=performance.now(),R='',ART=0,f=1;
+function size(){cv.forEach(c=>{const r=devicePixelRatio||1;c.width=c.clientWidth*r;c.height=c.clientHeight*r;});}
+addEventListener('resize',size);
+function load(n){
+  C=CASES[n];caseNo=n;
+  if(!C){$('mon').hidden=true;$('pick').hidden=false;return;}
+  $('pick').hidden=true;$('mon').hidden=false;$('hdr').textContent=C.hdr;
+  idx=0;prevSt=C.st[0];from=to=vals(C.st[0]);baseCur=from.slice();cur=from.slice();t0=0;bpShown=null;cuffDone=false;cuffN=0;
+  $('etw').hidden=!C.st.some(s=>s.et);$('gb').hidden=!C.glu;$('glw').hidden=true;
+  B.forEach(b=>b.fill(0));size();updCont();
+}
+function updCont(){const n=C.st.length,l=idx>=n-1,chain=!l&&C.st[idx+1].auto,tot=C.st.filter(s=>!s.auto).length,cur1=C.st.slice(0,idx+1).filter(s=>!s.auto).length;$('cont').hidden=tot<2;$('cont').disabled=l||chain;$('cont').textContent=l?'End of case':chain?'Progressing…':'Continue ▶';$('scr').textContent=tot<2?'':'Screen '+cur1+' of '+tot;}
+function cuff(alt){
+  const s=C.st[idx];bpTime=Date.now();
+  bpShown=alt&&s.bpAlt?s.bpAlt[cuffN++%2]:[Math.round(baseCur[1]),Math.round(baseCur[2])];
+}
+function step(){
+  const hr=cur[0],rr=cur[3],t=Date.now()/1000;
+  ph=(ph+hr/6000)%1;rph=(rph+(R==='cs'?18:rr)/6000)%1;
+  const pa=Math.max(.35,Math.min(1,(cur[1]-cur[2])/46)),sat=cur[4]<90?.8:1;
+  const tr=ART*(.5*Math.sin(2*Math.PI*4*t)+(Math.random()-.5));
+  const v0=ecg(ph)+.02*Math.sin(t*.6)+(Math.random()-.5)*.02+tr*.5;
+  const v1=ple(ph)*pa*sat+(Math.random()-.5)*.01+tr*.6;
+  let v2;
+  if(R==='obs')v2=(Math.random()-.5)*.7+.15*Math.sin(4*Math.PI*rph);
+  else if(R==='bvm')v2=Math.pow(Math.max(0,Math.sin(2*Math.PI*rph)),.6)*.9-.4;
+  else if(R==='cs'){const u=(t%40)/40,env=u<.75?Math.sin(Math.PI*u/.75):0;v2=env*Math.sin(2*Math.PI*rph)*.6;}
+  else v2=Math.sin(2*Math.PI*rph)*.5;
+  [v0,v1,v2].forEach((v,i)=>{B[i].copyWithin(0,1);B[i][N-1]=v;});
+}
+function draw(){
+  cv.forEach((c,i)=>{const x=c.getContext('2d'),w=c.width,h=c.height,r=devicePixelRatio||1;x.clearRect(0,0,w,h);
+    x.strokeStyle=col[i];x.lineWidth=2*r;x.lineJoin='round';x.beginPath();
+    const lo=i===0?-.5:i===1?-.3:-.7,hi=i===0?1.2:i===1?1.3:.7;
+    for(let k=0;k<N;k++){const px=k/(N-1)*w,py=h-((B[i][k]-lo)/(hi-lo))*h*.9-h*.05;k?x.lineTo(px,py):x.moveTo(px,py);}
+    x.stroke();});
+}
+function nums(d){
+  const [hr,,,rr,sp,tp,et]=cur,a=C.al,hide=d.rrHide;
+  $('hr').textContent=Math.round(hr);$('sp').textContent=Math.round(sp);$('rr').textContent=hide?'--':Math.round(rr);
+  $('spu').textContent='%'+(d.o?' '+d.o:'');$('tp').textContent=tp.toFixed(1);$('et').textContent=Math.round(et);
+  $('bp').textContent=bpShown[0]+'/'+bpShown[1];
+  $('map').textContent='MAP '+Math.round((bpShown[0]+2*bpShown[1])/3);
+  $('bpt').textContent=new Date(bpTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  $('n0').classList.toggle('alarm',hr>a.hh||hr<a.hl);
+  $('n1').classList.toggle('alarm',sp<a.sl);
+  $('n2').classList.toggle('alarm',!hide&&(rr>a.rh||rr<a.rl));
+  $('n3').classList.toggle('alarm',bpShown[0]<a.sbl||bpShown[0]>a.sbh);
+  $('clock').textContent=new Date().toLocaleTimeString();
+}
+function loop(now){
+  const dt=Math.min(.1,(now-last)/1000);last=now;
+  if(C&&!frozen){
+    const st=C.st[idx],tt=Date.now()/1000,p=Math.min(1,(Date.now()-t0)/((st.dur||DUR)*1000));f=1-(1-p)*(1-p);
+    baseCur=from.map((a,i)=>{const sl=st.slow&&st.slow[i];const q=sl?Math.min(1,(Date.now()-t0)/(sl*1000)):f;return a+(to[i]-a)*q;});
+    cur=baseCur.slice();cur[0]+=f*sw(st,tt)+(1-f)*sw(prevSt,tt);
+    const d=f<.25?prevSt:st;R=d.r||'';ART=(prevSt.art||0)*(1-f)+(st.art||0)*f;
+    if(p>=1&&!cuffDone){cuffDone=true;cuff(true);}
+    if(p>=1&&idx<C.st.length-1&&C.st[idx+1].auto)adv();
+    if(!bpShown||Date.now()-bpTime>30000)cuff(f>.5);
+    acc+=dt*100;while(acc>=1){step();acc--;}
+    nums(d);
+  }
+  draw();requestAnimationFrame(loop);
+}
+function adv(){if(idx<C.st.length-1){from=baseCur.slice();prevSt=C.st[idx];idx++;to=vals(C.st[idx]);t0=Date.now();cuffN=0;cuffDone=false;}updCont();}
+$('cont').onclick=adv;
+$('rst').onclick=()=>load(caseNo);
+$('frz').onclick=e=>{frozen=!frozen;e.target.classList.toggle('on',frozen);e.target.textContent=frozen?'Resume':'Freeze';};
+$('gb').onclick=()=>{$('glw').hidden=false;$('gl').textContent=C.glu;$('glt').textContent='mg/dL · '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});};
+$('pick').onclick=e=>{const b=e.target.closest('button');if(!b)return;const n=+b.dataset.c;try{location.hash='case'+n}catch(x){}load(n);};
+function route(){const m=/^#?case([1-4])$/.exec(location.hash);const n=m?+m[1]:0;if(n!==caseNo)load(n);}
+addEventListener('hashchange',route);route();requestAnimationFrame(loop);
+</script></body></html>
